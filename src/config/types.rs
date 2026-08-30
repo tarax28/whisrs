@@ -434,6 +434,10 @@ impl Default for AudioConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeepgramConfig {
+    /// Optional in the config file: an empty value means "use
+    /// `WHISRS_DEEPGRAM_API_KEY` from the environment" (validation and the
+    /// backend factories treat an empty key as absent).
+    #[serde(default)]
     pub api_key: String,
     #[serde(default = "default_deepgram_model")]
     pub model: String,
@@ -441,6 +445,10 @@ pub struct DeepgramConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroqConfig {
+    /// Optional in the config file: an empty value means "use
+    /// `WHISRS_GROQ_API_KEY` from the environment" (validation and the
+    /// backend factories treat an empty key as absent).
+    #[serde(default)]
     pub api_key: String,
     #[serde(default = "default_groq_model")]
     pub model: String,
@@ -448,6 +456,10 @@ pub struct GroqConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAiConfig {
+    /// Optional in the config file: an empty value means "use
+    /// `WHISRS_OPENAI_API_KEY` from the environment" (validation and the
+    /// backend factories treat an empty key as absent).
+    #[serde(default)]
     pub api_key: String,
     #[serde(default = "default_openai_model")]
     pub model: String,
@@ -1480,6 +1492,31 @@ mod tests {
     }
 
     #[test]
+    fn cloud_backend_sections_parse_without_api_key() {
+        // Regression: `api_key` used to be a required field, so a `[groq]`
+        // section kept for its `model` (with the key supplied via the
+        // WHISRS_GROQ_API_KEY env var) was a TOML parse error — and the
+        // daemon discarded the whole config and fell back to defaults,
+        // which then failed validation. The key is optional now; an empty
+        // value means "resolve from the environment".
+        let cfg: Config =
+            toml::from_str("[general]\nbackend = \"groq\"\n[groq]\nmodel = \"whisper-large-v3\"\n")
+                .unwrap();
+        assert_eq!(cfg.general.backend, "groq");
+        let groq = cfg.groq.expect("groq section should deserialize");
+        assert!(groq.api_key.is_empty());
+        assert_eq!(groq.model, "whisper-large-v3");
+
+        // Same for the other cloud sections.
+        let cfg: Config = toml::from_str(
+            "[general]\nbackend = \"deepgram\"\n[deepgram]\nmodel = \"nova-3\"\n[openai]\nmodel = \"gpt-4o-transcribe\"\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.deepgram.unwrap().api_key, "");
+        assert_eq!(cfg.openai.unwrap().api_key, "");
+    }
+
+    #[test]
     fn unknown_top_level_key_is_reported() {
         let unknown = unknown_config_keys("bogus = 1\n[general]\nbackend = \"groq\"\n");
         assert_eq!(unknown, vec!["bogus"]);
@@ -1502,8 +1539,6 @@ mod tests {
     fn section_with_only_unknown_keys_reports_leaves() {
         // A whole section the schema never heard of: every leaf inside it is
         // reported, nested ones included, so the user sees which key to fix.
-        // (`[deepgram]` can't stand in here — without `api_key` the document
-        // doesn't deserialize at all and nothing is reported.)
         let unknown = unknown_config_keys("[bogus]\nfoo = 1\n[bogus.nested]\nbar = 2\n");
         assert_eq!(unknown, vec!["bogus.foo", "bogus.nested.bar"]);
     }
