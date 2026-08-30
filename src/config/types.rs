@@ -1508,10 +1508,9 @@ mod tests {
         assert_eq!(groq.model, "whisper-large-v3");
 
         // Same for the other cloud sections.
-        let cfg: Config = toml::from_str(
-            "[general]\nbackend = \"deepgram\"\n[deepgram]\nmodel = \"nova-3\"\n[openai]\nmodel = \"gpt-4o-transcribe\"\n",
-        )
-        .unwrap();
+        let cfg: Config =
+            toml::from_str("[general]\nbackend = \"deepgram\"\n[deepgram]\nmodel = \"nova-3\"\n[openai]\nmodel = \"gpt-4o-transcribe\"\n")
+                .unwrap();
         assert_eq!(cfg.deepgram.unwrap().api_key, "");
         assert_eq!(cfg.openai.unwrap().api_key, "");
     }
