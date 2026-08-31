@@ -12,7 +12,7 @@ use whisrs::transcription::openai_compatible_realtime::OpenAiCompatibleRealtimeB
 use whisrs::transcription::openai_realtime::OpenAIRealtimeBackend;
 use whisrs::transcription::openai_rest::OpenAIRestBackend;
 use whisrs::transcription::TranscriptionBackend;
-use whisrs::{Config, LocalWhisperConfig};
+use whisrs::Config;
 
 fn resolve_groq_api_key(config: &Config) -> Option<String> {
     if let Ok(key) = std::env::var("WHISRS_GROQ_API_KEY") {
@@ -172,17 +172,9 @@ pub(crate) fn create_backend(config: &Config) -> Arc<dyn TranscriptionBackend> {
         }
         "local-whisper" | "local" => {
             // Serde defaults only apply when the [local-whisper] section
-            // exists; `LocalWhisperConfig::new` supplies the same defaults
-            // for a fully absent section.
-            let local_whisper = config.local_whisper.clone().unwrap_or_else(|| {
-                LocalWhisperConfig::new(
-                    dirs::data_dir()
-                        .unwrap_or_else(|| std::path::PathBuf::from("~/.local/share"))
-                        .join("whisrs/models/ggml-base.en.bin")
-                        .to_string_lossy()
-                        .to_string(),
-                )
-            });
+            // exists; `LocalWhisperConfig::default` supplies the same values
+            // for a fully absent section, `model_path` included.
+            let local_whisper = config.local_whisper.clone().unwrap_or_default();
             info!(
                 "using local whisper transcription backend \
                  (model: {}, segmentation: {})",

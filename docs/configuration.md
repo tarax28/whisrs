@@ -419,6 +419,9 @@ The following variables override the matching `api_key` in `config.toml`:
 - `WHISRS_OPENAI_API_KEY`
 - `WHISRS_ASR_SIDECAR_API_KEY`
 
+With one of these set, the matching `api_key` line can be left out of `config.toml`
+entirely. Keep the section itself if you set `model` there.
+
 These provider keys are also used by the matching TTS backend (`groq`/`openai`/`deepgram`) unless `[tts] api_key` is set. The `tts-sidecar` backend needs no key.
 
 `RUST_LOG` controls daemon log verbosity (e.g. `RUST_LOG=debug whisrsd`).
