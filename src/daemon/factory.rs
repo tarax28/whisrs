@@ -12,7 +12,7 @@ use whisrs::transcription::openai_compatible_realtime::OpenAiCompatibleRealtimeB
 use whisrs::transcription::openai_realtime::OpenAIRealtimeBackend;
 use whisrs::transcription::openai_rest::OpenAIRestBackend;
 use whisrs::transcription::TranscriptionBackend;
-use whisrs::Config;
+use whisrs::{Config, LocalWhisperConfig};
 
 fn resolve_groq_api_key(config: &Config) -> Option<String> {
     if let Ok(key) = std::env::var("WHISRS_GROQ_API_KEY") {
@@ -171,10 +171,7 @@ pub(crate) fn create_backend(config: &Config) -> Arc<dyn TranscriptionBackend> {
             Arc::new(OpenAIRestBackend::new(api_key))
         }
         "local-whisper" | "local" => {
-            // Serde defaults only apply when the [local-whisper] section
-            // exists; `LocalWhisperConfig::default` supplies the same values
-            // for a fully absent section, `model_path` included.
-            let local_whisper = config.local_whisper.clone().unwrap_or_default();
+            let local_whisper = local_whisper_settings(config);
             info!(
                 "using local whisper transcription backend \
                  (model: {}, segmentation: {})",
@@ -257,6 +254,20 @@ pub(crate) fn create_backend(config: &Config) -> Arc<dyn TranscriptionBackend> {
             Arc::new(GroqBackend::new(api_key))
         }
     }
+}
+
+/// The `[local-whisper]` settings [`create_backend`] runs on, including the
+/// fallback for a fully absent section.
+///
+/// Serde defaults only apply when the section exists, so the absent case needs
+/// its own answer. It is `LocalWhisperConfig::default`, never a literal here:
+/// `Config::validate` checks the same path for existence, and a separate copy
+/// would let it warn about one model file while the daemon loads another. Split
+/// out so `local_whisper_fallback_is_the_shared_default` can pin that, because
+/// the copy this replaced was unpinned. Same trap as `get_model_for_backend`
+/// below.
+fn local_whisper_settings(config: &Config) -> LocalWhisperConfig {
+    config.local_whisper.clone().unwrap_or_default()
 }
 
 pub(crate) fn get_model_for_backend(config: &Config) -> String {
@@ -493,5 +504,33 @@ mod tests {
                 "{backend}: the wire model and the model validate inspects disagree"
             );
         }
+    }
+
+    #[test]
+    fn local_whisper_fallback_is_the_shared_default() {
+        // Same trap as the test above, on the other local literal. With
+        // `[local-whisper]` absent this factory used to build its own copy of
+        // the model path while `Config::validate` computed the path it checks
+        // for existence separately. Replacing this fallback with a literal
+        // left the whole suite green, so pin it: the absent section, a section
+        // that omits `model_path`, and the path `validate` resolves must all
+        // be the same string, or the daemon loads a model the startup warning
+        // never mentioned.
+        let mut absent: Config = toml::from_str("").expect("empty config uses defaults");
+        absent.local_whisper = None;
+
+        let bare: Config = toml::from_str("[local-whisper]\nsegmentation = \"silence\"\n")
+            .expect("a [local-whisper] section may omit model_path");
+
+        assert_eq!(
+            local_whisper_settings(&absent).model_path,
+            whisrs::default_whisper_model_path(),
+            "absent [local-whisper] resolves to a path validate does not check"
+        );
+        assert_eq!(
+            local_whisper_settings(&absent).model_path,
+            local_whisper_settings(&bare).model_path,
+            "an absent section and a section without model_path load different models"
+        );
     }
 }

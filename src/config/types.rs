@@ -604,8 +604,15 @@ fn default_backend() -> String {
 ///
 /// Single source for the path `whisrs setup` downloads to: it is the serde
 /// default on [`LocalWhisperConfig::model_path`], the fallback
-/// [`Config::validate`] checks for existence, and the fallback the daemon's
-/// backend factory uses when the whole section is absent.
+/// [`Config::validate`] checks for existence, and (via
+/// [`LocalWhisperConfig::default`]) the fallback the daemon's backend factory
+/// uses when the whole section is absent.
+///
+/// `pub` rather than private like the other `default_*` helpers because that
+/// factory lives in the `whisrsd` binary crate, which cannot see items private
+/// to this one. Its `local_whisper_fallback_is_the_shared_default` test names
+/// this function so the pin is a shared reference and not a fourth copy of the
+/// literal, which is the divergence the pin exists to catch.
 pub fn default_whisper_model_path() -> String {
     dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("~/.local/share"))
