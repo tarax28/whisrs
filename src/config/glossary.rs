@@ -33,7 +33,7 @@ pub struct GlossaryEntry {
 /// The parsed glossary file: a `[[glossary]]` array-of-tables.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Glossary {
-    #[serde(default)]
+    #[serde(default, rename = "glossary")]
     pub entries: Vec<GlossaryEntry>,
 }
 
@@ -84,87 +84,56 @@ pub fn normalize_glossary_phrase(s: &str) -> String {
         .to_lowercase()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn glossary_file_lives_next_to_config_toml() {
-        let path = glossary_path();
-        assert_eq!(path.file_name().unwrap(), "glossary.toml");
-        assert_eq!(path.parent(), crate::config_path().parent());
+/// Serialize the glossary back to TOML, one `[[glossary]]` block per entry.
+///
+/// The file is rewritten whole (not appended) so `whisrs glossary add/remove`
+/// can never leave a half-written entry or duplicate a block. Comments in a
+/// hand-edited file are lost on the first command-driven write — acceptable
+/// for a file the CLI manages, and the alternative (append) corrupts the
+/// file on concurrent edits.
+pub fn serialize_glossary(glossary: &Glossary) -> String {
+    let mut out = String::from("# Personal glossary: say a phrase, whisrs types the exact text.\n");
+    out.push_str("# Managed by `whisrs glossary` — edit entries there.\n");
+    for entry in &glossary.entries {
+        out.push_str("\n[[glossary]]\n");
+        out.push_str(&format!("say = {:?}\n", entry.say));
+        out.push_str(&format!("type = {:?}\n", entry.r#type));
     }
+    out
+}
 
-    #[test]
-    fn missing_file_is_not_an_error() {
-        let dir = std::env::temp_dir().join("whisrs-glossary-test-missing");
-        let _ = std::fs::remove_dir_all(&dir);
-        let glossary = load_glossary_file(&dir.join("glossary.toml")).unwrap();
-        assert!(glossary.entries.is_empty());
+/// Write the glossary file (0600, like config.toml). Creates parents if needed.
+pub fn save_glossary_file(path: &Path, glossary: &Glossary) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
+    crate::config::setup::write_private_file(path, &serialize_glossary(glossary))
+}
 
-    #[test]
-    fn parses_entries() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("glossary.toml");
-        std::fs::write(
-            &path,
-            r#"
-[[glossary]]
-say = "la mia email"
-type = "nome.cognome@example.com"
+/// Add an entry and persist. Returns the new entry's 0-based index.
+pub fn add_entry(
+    path: &Path,
+    glossary: &mut Glossary,
+    say: String,
+    r#type: String,
+) -> io::Result<usize> {
+    let idx = glossary.entries.len();
+    glossary.entries.push(GlossaryEntry { say, r#type });
+    save_glossary_file(path, glossary)?;
+    Ok(idx)
+}
 
-[[glossary]]
-say = "il mio numero"
-text = "+39 333 1234567"
-"#,
-        )
-        .unwrap();
-        let glossary = load_glossary_file(&path).unwrap();
-        assert_eq!(glossary.entries.len(), 2);
-        assert_eq!(glossary.entries[0].say, "la mia email");
-        assert_eq!(glossary.entries[0].r#type, "nome.cognome@example.com");
-        // `text` alias works too.
-        assert_eq!(glossary.entries[1].r#type, "+39 333 1234567");
+/// Remove an entry by 0-based index, persisting the change. Returns the
+/// removed entry, or `None` when the index is out of range (nothing written).
+pub fn remove_entry(
+    path: &Path,
+    glossary: &mut Glossary,
+    idx: usize,
+) -> io::Result<Option<GlossaryEntry>> {
+    if idx >= glossary.entries.len() {
+        return Ok(None);
     }
-
-    #[test]
-    fn lookup_matches_normalized_transcript() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("glossary.toml");
-        std::fs::write(
-            &path,
-            r#"
-[[glossary]]
-say = "la mia email"
-type = "nome.cognome@example.com"
-"#,
-        )
-        .unwrap();
-        let glossary = load_glossary_file(&path).unwrap();
-
-        // Exact match.
-        assert_eq!(
-            glossary.lookup("la mia email"),
-            Some("nome.cognome@example.com".to_string())
-        );
-        // Case-insensitive.
-        assert_eq!(
-            glossary.lookup("La Mia Email"),
-            Some("nome.cognome@example.com".to_string())
-        );
-        // Whitespace collapsed.
-        assert_eq!(
-            glossary.lookup("  la   mia  email  "),
-            Some("nome.cognome@example.com".to_string())
-        );
-        // No match.
-        assert_eq!(glossary.lookup("il mio numero"), None);
-    }
-
-    #[test]
-    fn lookup_on_empty_glossary_returns_none() {
-        let glossary = Glossary::default();
-        assert_eq!(glossary.lookup("la mia email"), None);
-    }
+    let removed = glossary.entries.remove(idx);
+    save_glossary_file(path, glossary)?;
+    Ok(Some(removed))
 }

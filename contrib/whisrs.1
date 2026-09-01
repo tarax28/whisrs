@@ -108,6 +108,41 @@ or a
 stops playback. Alias:
 .BR read .
 .TP
+.B glossary
+Manage the personal glossary
+.RI ( glossary.toml ),
+a list of spoken phrases mapped to exact replacement text \\(em say
+\[lq]la mia email\[rq], whisrs types the exact address, no LLM involved.
+Subcommands:
+.RS
+.TP
+.B add
+Interactively prompts for the phrase you say and the text to type, then
+appends an entry. Pass
+\\fB\\-\\-say\\fR
+and
+\\fB\\-\\-type\\fR
+to add non-interactively.
+.TP
+.B list
+Print every entry, each with its 0-based index. Use the index with
+.B edit
+or
+.BR remove .
+.TP
+\\fBedit\\fR \\fIINDEX\\fR
+Edit the entry at
+.IR INDEX ,
+prompting for a new phrase and text (empty keeps the current value).
+.TP
+\\fBremove\\fR \\fIINDEX\\fR
+Remove the entry at
+.IR INDEX .
+.RE
+Restart the daemon after adding or editing entries so it reloads the file:
+.B systemctl --user restart whisrs
+.
+.TP
 .B status
 Query the daemon state. Prints one of:
 .BR idle ,

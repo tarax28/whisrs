@@ -496,6 +496,7 @@ mod tests {
                 ChatMessage::user("Hello".to_string()),
             ],
             temperature: 0.3,
+            reasoning_effort: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("gpt-4o-mini"));

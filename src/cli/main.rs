@@ -4,6 +4,9 @@ use clap::{Parser, Subcommand};
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 
+use whisrs::config::glossary::{
+    add_entry, glossary_path, load_glossary_file, remove_entry, Glossary,
+};
 use whisrs::history::HistoryEntry;
 use whisrs::{
     encode_message, read_message, service::ServiceManager, socket_path, Command, Response,
@@ -89,8 +92,38 @@ enum SubCmd {
     /// Read the selected text aloud via TTS (press again to stop playback)
     #[command(alias = "read")]
     Speak,
+    /// Manage the personal glossary (glossary.toml): add, list, edit, remove
+    #[command(subcommand)]
+    Glossary(GlossaryCmd),
     /// Restart the whisrs daemon (uses the systemd or OpenRC user service when present)
     Restart,
+}
+
+/// Subcommands for `whisrs glossary`.
+#[derive(Subcommand)]
+enum GlossaryCmd {
+    /// Add an entry interactively: prompts for the phrase you say and the
+    /// text to type. Pass `--say`/`--type` to skip the prompts.
+    Add {
+        /// The spoken phrase (e.g. "la mia email"). Prompts if omitted.
+        #[arg(long)]
+        say: Option<String>,
+        /// The exact text to type (e.g. "nome@example.com"). Prompts if omitted.
+        #[arg(long)]
+        r#type: Option<String>,
+    },
+    /// List all glossary entries, indexed. Use the index with `edit`/`remove`.
+    List,
+    /// Edit the entry at INDEX: prompts for the new phrase and text.
+    Edit {
+        /// 0-based index from `whisrs glossary list`.
+        index: usize,
+    },
+    /// Remove the entry at INDEX.
+    Remove {
+        /// 0-based index from `whisrs glossary list`.
+        index: usize,
+    },
 }
 
 /// Check if stdout is a TTY for color support.
@@ -167,6 +200,9 @@ async fn main() -> anyhow::Result<()> {
         SubCmd::Speak => {
             send_command(Command::Speak).await?;
         }
+        SubCmd::Glossary(cmd) => {
+            cmd_glossary(cmd)?;
+        }
         SubCmd::Restart => {
             cmd_restart()?;
         }
@@ -239,6 +275,115 @@ fn cmd_restart() -> anyhow::Result<()> {
             process::exit(1);
         }
     }
+}
+
+/// Dispatch `whisrs glossary` subcommands. Loads glossary.toml, mutates it in
+/// memory, persists via the module's save (0600). Prompts are interactive
+/// (dialoguer); a non-TTY stdin falls back to an error telling the user to
+/// pass `--say`/`--type` instead.
+fn cmd_glossary(cmd: GlossaryCmd) -> anyhow::Result<()> {
+    let path = glossary_path();
+    let mut glossary = load_glossary_file(&path)
+        .map_err(|e| anyhow::anyhow!("failed to load glossary at {}: {e}", path.display()))?;
+
+    let use_color = is_tty();
+
+    match cmd {
+        GlossaryCmd::Add { say, r#type } => {
+            let say = match say {
+                Some(s) => s,
+                None => prompt_text("What phrase do you say? (e.g. \"la mia email\")")?,
+            };
+            let r#type = match r#type {
+                Some(t) => t,
+                None => prompt_text("What text should be typed? (e.g. \"nome@example.com\")")?,
+            };
+
+            if say.trim().is_empty() || r#type.trim().is_empty() {
+                anyhow::bail!("say and type must not be empty");
+            }
+
+            let idx = add_entry(&path, &mut glossary, say, r#type)?;
+            if use_color {
+                println!("{GREEN}Added #{idx}: \"{}\" -> \"{}\"{RESET}", glossary.entries[idx].say, glossary.entries[idx].r#type);
+            } else {
+                println!("Added #{idx}: \"{}\" -> \"{}\"", glossary.entries[idx].say, glossary.entries[idx].r#type);
+            }
+            println!("Restart the daemon to pick it up: systemctl --user restart whisrs");
+        }
+        GlossaryCmd::List => {
+            if glossary.entries.is_empty() {
+                println!("Glossary is empty. Add an entry with: whisrs glossary add");
+                return Ok(());
+            }
+            println!("Index  Say  ->  Type");
+            for (i, e) in glossary.entries.iter().enumerate() {
+                if use_color {
+                    println!("{CYAN}{i:<5}{RESET} {}  ->  {}", e.say, e.r#type);
+                } else {
+                    println!("{i:<5} {}  ->  {}", e.say, e.r#type);
+                }
+            }
+        }
+        GlossaryCmd::Edit { index } => {
+            if index >= glossary.entries.len() {
+                anyhow::bail!(
+                    "no entry at index {index} (have {}) — run `whisrs glossary list`",
+                    glossary.entries.len()
+                );
+            }
+            let current_say = glossary.entries[index].say.clone();
+            let current_type = glossary.entries[index].r#type.clone();
+            println!("Editing #{index}: \"{current_say}\" -> \"{current_type}\"");
+            let say = prompt_text("New phrase (empty keeps current)")?;
+            let r#type = prompt_text("New text (empty keeps current)")?;
+            if !say.trim().is_empty() {
+                glossary.entries[index].say = say.trim().to_string();
+            }
+            if !r#type.trim().is_empty() {
+                glossary.entries[index].r#type = r#type.trim().to_string();
+            }
+            save_glossary(&path, &glossary)?;
+            println!("Updated #{index}: \"{}\" -> \"{}\"", glossary.entries[index].say, glossary.entries[index].r#type);
+        }
+        GlossaryCmd::Remove { index } => {
+            if index >= glossary.entries.len() {
+                anyhow::bail!(
+                    "no entry at index {index} (have {}) — run `whisrs glossary list`",
+                    glossary.entries.len()
+                );
+            }
+            let removed = remove_entry(&path, &mut glossary, index)?
+                .expect("index checked above");
+            if use_color {
+                println!("{RED}Removed #{index}: \"{}\" -> \"{}\"{RESET}", removed.say, removed.r#type);
+            } else {
+                println!("Removed #{index}: \"{}\" -> \"{}\"", removed.say, removed.r#type);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Interactive text prompt (dialoguer). Errors on non-TTY stdin.
+fn prompt_text(prompt: &str) -> anyhow::Result<String> {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!("interactive prompt requires a terminal — pass --say/--type instead");
+    }
+    let value: String = dialoguer::Input::new()
+        .with_prompt(prompt)
+        .allow_empty(true)
+        .interact_text()
+        .map_err(|e| anyhow::anyhow!("failed to read input: {e}"))?;
+    Ok(value.trim().to_string())
+}
+
+/// Persist the glossary via the module's writer (0600).
+fn save_glossary(path: &std::path::Path, glossary: &Glossary) -> anyhow::Result<()> {
+    whisrs::config::glossary::save_glossary_file(path, glossary)
+        .map_err(|e| anyhow::anyhow!("failed to write glossary at {}: {e}", path.display()))
 }
 
 /// Connect to the daemon and send a command, printing the response.
