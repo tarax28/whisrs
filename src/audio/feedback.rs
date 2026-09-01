@@ -11,36 +11,36 @@ use tracing::warn;
 /// Sample rate for generated tones.
 const TONE_SAMPLE_RATE: u32 = 44_100;
 
-/// Play the "start recording" sound: a short rising tone (800Hz -> 1200Hz, ~150ms).
+/// Play the "start recording" sound: a short rising tone (350Hz -> 550Hz, ~150ms).
 pub fn play_start(volume: f32) {
     std::thread::Builder::new()
         .name("whisrs-feedback".into())
         .spawn(move || {
-            let samples = generate_sweep(800.0, 1200.0, 0.15, volume);
+            let samples = generate_sweep(350.0, 550.0, 0.15, volume);
             play_samples(&samples);
         })
         .ok();
 }
 
-/// Play the "stop recording" sound: a short falling tone (1200Hz -> 800Hz, ~150ms).
+/// Play the "stop recording" sound: a short falling tone (550Hz -> 350Hz, ~150ms).
 pub fn play_stop(volume: f32) {
     std::thread::Builder::new()
         .name("whisrs-feedback".into())
         .spawn(move || {
-            let samples = generate_sweep(1200.0, 800.0, 0.15, volume);
+            let samples = generate_sweep(550.0, 350.0, 0.15, volume);
             play_samples(&samples);
         })
         .ok();
 }
 
-/// Play the "done" sound: a soft double beep (~200ms total).
+/// Play the "done" sound: a soft double beep (~200ms total), warm and low.
 pub fn play_done(volume: f32) {
     std::thread::Builder::new()
         .name("whisrs-feedback".into())
         .spawn(move || {
-            let beep1 = generate_tone(1000.0, 0.07, volume);
+            let beep1 = generate_tone(392.0, 0.07, volume); // G4 — warm
             let silence = vec![0.0f32; (TONE_SAMPLE_RATE as f32 * 0.06) as usize];
-            let beep2 = generate_tone(1200.0, 0.07, volume);
+            let beep2 = generate_tone(523.25, 0.07, volume); // C5 — soft fifth
 
             let mut samples = Vec::with_capacity(beep1.len() + silence.len() + beep2.len());
             samples.extend_from_slice(&beep1);

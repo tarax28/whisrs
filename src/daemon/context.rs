@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use whisrs::audio::capture::AudioCaptureHandle;
+use whisrs::config::glossary::Glossary;
 use whisrs::llm;
 use whisrs::state::StateMachine;
 use whisrs::transcription::TranscriptionBackend;
@@ -101,6 +102,8 @@ impl DaemonState {
 /// Resources shared across all connections (not behind the per-request mutex).
 pub(crate) struct DaemonContext {
     pub(crate) config: Config,
+    /// Personal glossary loaded from `glossary.toml` (separate from config).
+    pub(crate) glossary: Glossary,
     pub(crate) window_tracker: Arc<dyn WindowTracker>,
     pub(crate) transcription_backend: Arc<dyn TranscriptionBackend>,
     pub(crate) notify: bool,

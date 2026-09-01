@@ -12,7 +12,7 @@ use whisrs::{validate_language_override, Response, State};
 use crate::context::{DaemonContext, DaemonState};
 use crate::notify::{send_notification, truncate_preview};
 use crate::pipeline::{
-    build_transcription_config, format_no_microphone_error, history_backend_tag,
+    build_transcription_config, format_no_microphone_error, glossary_lookup, history_backend_tag,
     process_recording_batch, run_streaming_pipeline, save_history_entry, DictationOutcome,
     StreamingPipelineParams,
 };
@@ -230,7 +230,18 @@ pub(crate) async fn handle_toggle(
                             // whole transcript to hand the LLM.
                             // `Config::validate` warns when `llm_post_process`
                             // is paired with a streaming backend.
-                            Ok(Ok(text)) => Ok(DictationOutcome::raw(text)),
+                            //
+                            // The personal glossary still applies here: the
+                            // full accumulated text is checked at stop, and an
+                            // exact match replaces what was typed (the partials
+                            // are gone, so the typed result is the fixed text).
+                            Ok(Ok(text)) => match glossary_lookup(&text, &context.glossary) {
+                                Some(replacement) => {
+                                    info!("glossary match (streaming): \"{text}\" -> \"{replacement}\"");
+                                    Ok(DictationOutcome::raw(replacement))
+                                }
+                                None => Ok(DictationOutcome::raw(text)),
+                            },
                             Ok(Err(e)) => Err(e),
                             Err(e) => Err(anyhow::anyhow!("streaming task panicked: {e}")),
                         }

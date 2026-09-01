@@ -7,6 +7,7 @@ use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
+use whisrs::config::glossary::{glossary_path, load_glossary_file, Glossary};
 use whisrs::history;
 use whisrs::window::{self, WindowTracker};
 use whisrs::{encode_message, read_message, socket_path, Command, Response, State};
@@ -73,6 +74,17 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Personal glossary (separate file, so backend-switch scripts that rewrite
+    // config.toml never touch it). A missing file is the opt-out; a malformed
+    // one is warned about and the daemon keeps running with an empty glossary.
+    let glossary = match load_glossary_file(&glossary_path()) {
+        Ok(g) => g,
+        Err(e) => {
+            error!("failed to load glossary: {e:#} — continuing with an empty glossary");
+            Glossary::default()
+        }
+    };
+
     let backend = create_backend(&config);
 
     // Wait for compositor environment on boot (WAYLAND_DISPLAY, etc.).
@@ -104,6 +116,7 @@ async fn main() -> Result<()> {
     let overlay_config = config.overlay.clone().unwrap_or_default();
     let context = Arc::new(DaemonContext {
         config,
+        glossary,
         window_tracker,
         transcription_backend: backend,
         notify,

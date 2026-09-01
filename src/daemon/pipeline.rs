@@ -14,6 +14,7 @@ use whisrs::audio::feedback;
 use whisrs::history::{self, HistoryEntry};
 use whisrs::llm;
 use whisrs::state::Action;
+use whisrs::config::glossary::Glossary;
 use whisrs::transcription::{TranscriptionBackend, TranscriptionConfig};
 use whisrs::window::WindowTracker;
 use whisrs::{Config, InjectorBackend, State};
@@ -790,6 +791,17 @@ pub(crate) fn history_backend_tag(backend: &str, post_processed: bool) -> String
     }
 }
 
+/// Resolve a transcript against the personal glossary loaded from
+/// `glossary.toml` (via [`DaemonContext`]).
+///
+/// Returns the glossary's fixed replacement text when the transcript
+/// (normalized: trimmed, lowercased, whitespace-collapsed) exactly matches an
+/// entry's `say` phrase. Returns `None` when there is no match — the caller
+/// then proceeds with the normal LLM post-processing / raw injection path.
+pub(crate) fn glossary_lookup(transcript: &str, glossary: &Glossary) -> Option<String> {
+    glossary.lookup(transcript)
+}
+
 /// Pick the text to inject after a post-processing attempt. `rewritten` is
 /// `None` when the call failed or timed out, and a blank completion counts the
 /// same: the original transcript wins in every one of those cases.
@@ -909,6 +921,14 @@ pub(crate) async fn process_recording_batch(
     if text.is_empty() {
         // Gated, echo-dropped, or empty — the helper already said so.
         return Ok(DictationOutcome::raw(text));
+    }
+
+    // Personal glossary: an exact (normalized) match replaces the transcript
+    // with fixed text BEFORE any LLM post-processing — deterministic, fast,
+    // and immune to the LLM mangling an email address or phone number.
+    if let Some(replacement) = glossary_lookup(&text, &context.glossary) {
+        info!("glossary match: \"{text}\" -> \"{replacement}\"");
+        return Ok(DictationOutcome::raw(replacement));
     }
 
     // `[general] llm_post_process`: rewrite the finished transcript through
@@ -1605,6 +1625,7 @@ mod tests {
     fn context_with_backend(backend: StubBackend) -> DaemonContext {
         DaemonContext {
             config: config_with_vocabulary(&WIRING_VOCABULARY),
+            glossary: Glossary::default(),
             window_tracker: Arc::new(whisrs::window::NoopTracker),
             transcription_backend: Arc::new(backend),
             notify: false,

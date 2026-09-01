@@ -2053,6 +2053,7 @@ pub(crate) fn configure_llm() -> Result<Option<LlmConfig>> {
         api_key,
         model,
         api_url: api_url.to_string(),
+        reasoning_effort: None,
     }))
 }
 

@@ -39,6 +39,11 @@ pub struct LlmConfig {
     /// API base URL. Defaults to OpenAI. Set to Groq or other provider URL.
     #[serde(default = "default_llm_url")]
     pub api_url: String,
+    /// Reasoning effort for reasoning-capable models (e.g. "low", "medium",
+    /// "high"). Sent as `reasoning_effort` in the chat request; omitted when
+    /// absent so other providers are unaffected.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 impl Default for LlmConfig {
@@ -47,6 +52,7 @@ impl Default for LlmConfig {
             api_key: String::new(),
             model: default_llm_model(),
             api_url: default_llm_url(),
+            reasoning_effort: None,
         }
     }
 }
@@ -95,6 +101,8 @@ struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
     temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -430,6 +438,7 @@ async fn chat_with_key(
         model: config.model.clone(),
         messages,
         temperature: 0.3,
+        reasoning_effort: config.reasoning_effort.clone(),
     };
 
     let client = reqwest::Client::new();
