@@ -231,10 +231,9 @@ pub(crate) async fn handle_toggle(
                             // `Config::validate` warns when `llm_post_process`
                             // is paired with a streaming backend.
                             //
-                            // The personal glossary still applies here: the
+                            // The personal glossary applies here too: the
                             // full accumulated text is checked at stop, and an
-                            // exact match replaces what was typed (the partials
-                            // are gone, so the typed result is the fixed text).
+                            // exact match replaces what was typed.
                             Ok(Ok(text)) => match glossary_lookup(&text, &context.glossary) {
                                 Some(replacement) => {
                                     info!("glossary match (streaming): \"{text}\" -> \"{replacement}\"");

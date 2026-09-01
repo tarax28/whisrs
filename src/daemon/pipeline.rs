@@ -792,12 +792,8 @@ pub(crate) fn history_backend_tag(backend: &str, post_processed: bool) -> String
 }
 
 /// Resolve a transcript against the personal glossary loaded from
-/// `glossary.toml` (via [`DaemonContext`]).
-///
-/// Returns the glossary's fixed replacement text when the transcript
-/// (normalized: trimmed, lowercased, whitespace-collapsed) exactly matches an
-/// entry's `say` phrase. Returns `None` when there is no match — the caller
-/// then proceeds with the normal LLM post-processing / raw injection path.
+/// `glossary.toml` (via [`DaemonContext`]). Returns the replacement text on
+/// a match, or `None` to continue with the normal LLM / raw path.
 pub(crate) fn glossary_lookup(transcript: &str, glossary: &Glossary) -> Option<String> {
     glossary.lookup(transcript)
 }
@@ -923,12 +919,15 @@ pub(crate) async fn process_recording_batch(
         return Ok(DictationOutcome::raw(text));
     }
 
-    // Personal glossary: an exact (normalized) match replaces the transcript
-    // with fixed text BEFORE any LLM post-processing — deterministic, fast,
-    // and immune to the LLM mangling an email address or phone number.
+    // Personal glossary: any glossary phrase found in the transcript is
+    // replaced with the fixed text before any LLM post-processing, so the
+    // replacement (not the LLM's rewriting of it) reaches the cursor and
+    // history. The LLM post-processing is skipped on a hit.
+    let (mut text, mut glossary_hit) = (text, false);
     if let Some(replacement) = glossary_lookup(&text, &context.glossary) {
         info!("glossary match: \"{text}\" -> \"{replacement}\"");
-        return Ok(DictationOutcome::raw(replacement));
+        text = replacement;
+        glossary_hit = true;
     }
 
     // `[general] llm_post_process`: rewrite the finished transcript through
@@ -939,7 +938,11 @@ pub(crate) async fn process_recording_batch(
     // is inverted here and `Config::validate` warns instead. The rewritten
     // text is what this function returns, so history records what was actually
     // typed, tagged by `history_backend_tag` with whether the LLM produced it.
-    let outcome = apply_llm_post_process(text, context).await;
+    let outcome = if glossary_hit {
+        DictationOutcome::raw(text)
+    } else {
+        apply_llm_post_process(text, context).await
+    };
 
     let key_delay = std::time::Duration::from_millis(context.config.input.key_delay_ms);
     let injector_backend = context.config.input.backend;

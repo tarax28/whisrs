@@ -117,10 +117,12 @@ Subcommands:
 .RS
 .TP
 .B add
-Interactively prompts for the phrase you say and the text to type, then
-appends an entry. Pass
+Interactively prompts for the phrase(s) you say and the text to type, then
+appends an entry. Repeat
 \\fB\\-\\-say\\fR
-and
+to add multiple phrases mapping to the same text, e.g.
+.B whisrs glossary add --say "la mia email" --say "mia email" --type "nome@example.com"
+or pass
 \\fB\\-\\-type\\fR
 to add non-interactively.
 .TP

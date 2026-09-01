@@ -102,12 +102,13 @@ enum SubCmd {
 /// Subcommands for `whisrs glossary`.
 #[derive(Subcommand)]
 enum GlossaryCmd {
-    /// Add an entry interactively: prompts for the phrase you say and the
-    /// text to type. Pass `--say`/`--type` to skip the prompts.
+    /// Add an entry interactively: prompts for the phrase(s) you say and the
+    /// text to type. Pass `--say` (repeatable) / `--type` to skip the prompts.
     Add {
-        /// The spoken phrase (e.g. "la mia email"). Prompts if omitted.
-        #[arg(long)]
-        say: Option<String>,
+        /// The spoken phrase (e.g. "la mia email"). Repeat for aliases, e.g.
+        /// `--say "la mia email" --say "mia email"`. Prompts if omitted.
+        #[arg(long, action = clap::ArgAction::Append)]
+        say: Option<Vec<String>>,
         /// The exact text to type (e.g. "nome@example.com"). Prompts if omitted.
         #[arg(long)]
         r#type: Option<String>,
@@ -290,24 +291,42 @@ fn cmd_glossary(cmd: GlossaryCmd) -> anyhow::Result<()> {
 
     match cmd {
         GlossaryCmd::Add { say, r#type } => {
-            let say = match say {
-                Some(s) => s,
-                None => prompt_text("What phrase do you say? (e.g. \"la mia email\")")?,
-            };
+            let mut says: Vec<String> = say.unwrap_or_default();
+            if says.is_empty() {
+                // Interactive: prompt for phrases until the user leaves one
+                // blank. First prompt is required; subsequent are optional.
+                loop {
+                    let label = if says.is_empty() {
+                        "What phrase do you say? (e.g. \"la mia email\")"
+                    } else {
+                        "Another phrase for the same text? (empty to finish)"
+                    };
+                    let s = prompt_text(label)?;
+                    if s.trim().is_empty() {
+                        break;
+                    }
+                    says.push(s.trim().to_string());
+                }
+                if says.is_empty() {
+                    anyhow::bail!("no phrase given — nothing to add");
+                }
+            }
+
             let r#type = match r#type {
                 Some(t) => t,
                 None => prompt_text("What text should be typed? (e.g. \"nome@example.com\")")?,
             };
 
-            if say.trim().is_empty() || r#type.trim().is_empty() {
-                anyhow::bail!("say and type must not be empty");
+            if r#type.trim().is_empty() {
+                anyhow::bail!("type must not be empty");
             }
 
-            let idx = add_entry(&path, &mut glossary, say, r#type)?;
+            let idx = add_entry(&path, &mut glossary, says.clone(), r#type)?;
+            let phrases = says.join("\", \"");
             if use_color {
-                println!("{GREEN}Added #{idx}: \"{}\" -> \"{}\"{RESET}", glossary.entries[idx].say, glossary.entries[idx].r#type);
+                println!("{GREEN}Added #{idx}: [\"{phrases}\"] -> \"{}\"{RESET}", glossary.entries[idx].r#type);
             } else {
-                println!("Added #{idx}: \"{}\" -> \"{}\"", glossary.entries[idx].say, glossary.entries[idx].r#type);
+                println!("Added #{idx}: [\"{phrases}\"] -> \"{}\"", glossary.entries[idx].r#type);
             }
             println!("Restart the daemon to pick it up: systemctl --user restart whisrs");
         }
@@ -318,10 +337,11 @@ fn cmd_glossary(cmd: GlossaryCmd) -> anyhow::Result<()> {
             }
             println!("Index  Say  ->  Type");
             for (i, e) in glossary.entries.iter().enumerate() {
+                let phrases = e.says.join(", ");
                 if use_color {
-                    println!("{CYAN}{i:<5}{RESET} {}  ->  {}", e.say, e.r#type);
+                    println!("{CYAN}{i:<5}{RESET} {phrases}  ->  {}", e.r#type);
                 } else {
-                    println!("{i:<5} {}  ->  {}", e.say, e.r#type);
+                    println!("{i:<5} {phrases}  ->  {}", e.r#type);
                 }
             }
         }
@@ -332,19 +352,34 @@ fn cmd_glossary(cmd: GlossaryCmd) -> anyhow::Result<()> {
                     glossary.entries.len()
                 );
             }
-            let current_say = glossary.entries[index].say.clone();
+            let current_says = glossary.entries[index].says.clone();
             let current_type = glossary.entries[index].r#type.clone();
-            println!("Editing #{index}: \"{current_say}\" -> \"{current_type}\"");
-            let say = prompt_text("New phrase (empty keeps current)")?;
-            let r#type = prompt_text("New text (empty keeps current)")?;
-            if !say.trim().is_empty() {
-                glossary.entries[index].say = say.trim().to_string();
+            println!("Editing #{index}: [\"{}\"] -> \"{current_type}\"", current_says.join("\", \""));
+            // Replace the phrase list: prompt for each new phrase, empty to
+            // stop. If the user enters nothing at the first prompt, keep the
+            // existing phrases.
+            let mut new_says: Vec<String> = Vec::new();
+            loop {
+                let label = if new_says.is_empty() {
+                    "New phrase (empty keeps current / stops)"
+                } else {
+                    "Another phrase (empty to stop)"
+                };
+                let s = prompt_text(label)?;
+                if s.trim().is_empty() {
+                    break;
+                }
+                new_says.push(s.trim().to_string());
             }
+            if !new_says.is_empty() {
+                glossary.entries[index].says = new_says;
+            }
+            let r#type = prompt_text("New text (empty keeps current)")?;
             if !r#type.trim().is_empty() {
                 glossary.entries[index].r#type = r#type.trim().to_string();
             }
             save_glossary(&path, &glossary)?;
-            println!("Updated #{index}: \"{}\" -> \"{}\"", glossary.entries[index].say, glossary.entries[index].r#type);
+            println!("Updated #{index}: [\"{}\"] -> \"{}\"", glossary.entries[index].says.join("\", \""), glossary.entries[index].r#type);
         }
         GlossaryCmd::Remove { index } => {
             if index >= glossary.entries.len() {
@@ -355,10 +390,11 @@ fn cmd_glossary(cmd: GlossaryCmd) -> anyhow::Result<()> {
             }
             let removed = remove_entry(&path, &mut glossary, index)?
                 .expect("index checked above");
+            let phrases = removed.says.join("\", \"");
             if use_color {
-                println!("{RED}Removed #{index}: \"{}\" -> \"{}\"{RESET}", removed.say, removed.r#type);
+                println!("{RED}Removed #{index}: [\"{phrases}\"] -> \"{}\"{RESET}", removed.r#type);
             } else {
-                println!("Removed #{index}: \"{}\" -> \"{}\"", removed.say, removed.r#type);
+                println!("Removed #{index}: [\"{phrases}\"] -> \"{}\"", removed.r#type);
             }
         }
     }
